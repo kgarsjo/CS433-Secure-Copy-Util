@@ -5,6 +5,9 @@
 *.lib
 *.a
 
+# Vim backup files
+._*
+
 # Shared objects (inc. Windows DLLs)
 *.dll
 *.so
