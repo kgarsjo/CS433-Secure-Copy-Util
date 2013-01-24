@@ -31,8 +31,9 @@ int main(int argc, char **argv) {
 	// Argument validity checks
 	if (argc >= 2) {
 		inputFile= argv[1];
+
 		int i;
-		for (i= 1; i < argc; i++) {
+		for (i= 2; i < argc; i++) {
 			int resd= strcmp(dFlagStr, argv[i]);
 			int resl= strcmp(lFlagStr, argv[i]);
 
