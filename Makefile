@@ -3,11 +3,11 @@ CCFLAGS=-g -Wall
 
 all: uoenc uodec
 
-uoenc:
-	$(CC) $(CCFLAGS) -c uoenc.c
-	$(CC) uoenc.o -o uoenc
+uoenc: uoenc.c
+	$(CC) $(CCFLAGS) -c uoenc.c `libgcrypt-config --cflags`
+	$(CC) uoenc.o -o uoenc `libgcrypt-config --libs`
 
-uodec:
+uodec: uodec.c
 	$(CC) $(CCFLAGS) -c uodec.c
 	$(CC) uodec.o -o uodec
 
