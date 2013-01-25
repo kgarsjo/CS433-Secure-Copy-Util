@@ -10,6 +10,7 @@ const char* const dFlagStr= "-d";
 const char* const lFlagStr= "-l";
 const size_t blocksize= 1024;
 
+
 /* -------------------------------- //
 	Function Prototypes
 // -------------------------------- */
@@ -18,6 +19,7 @@ void gcryptInit();
 void printUsage();
 void save(char*);
 void transmit(char*, char*);
+void testAES();
 
 /* -------------------------------- //
 	Program Entry
@@ -38,7 +40,7 @@ int main(int argc, char **argv) {
 
 	// Argument validity checks
 	if (argc >= 2) {
-		strcpy(argv[1], inputFile); //TODO Error checking
+		strcpy(inputFile, argv[1]); //TODO Error checking
 		validArgs= 1;
 		
 		if (argc > 2) {
@@ -84,34 +86,56 @@ int main(int argc, char **argv) {
 	}
 
 	encrypt(inputFile, password);
-	if (localFlag) {
+	/*if (localFlag) {
 		save(NULL);
 	}
 	if (dumpFlag) {
 		transmit(NULL, NULL);
 	}
-	
+	*/
+
+	//testAES();
+
 	return 0;
 }
 
 
-void encrypt(char *filename, char *key) { 
+void encrypt(char *filename, char *password) { 
 	gcry_cipher_hd_t handle;
 	gcry_error_t	 error;
-	
-	// Set the handle and key for AES256 algo
-	error= gcry_cipher_open(&handle, GCRY_CIPHER_AES256, GCRY_CIPHER_MODE_CBC, GCRY_CIPHER_SECURE);
+
+	const size_t KEYLEN= gcry_cipher_get_algo_keylen(GCRY_CIPHER_AES256);
+	const size_t BLKLEN= gcry_cipher_get_algo_blklen(GCRY_CIPHER_AES256);
+	const char *salt= "saltyEnough?";
+
+
+	// Generate key using PBKDF2
+	char *key= (char*) malloc(sizeof(char) * KEYLEN);
+	error= gcry_kdf_derive(password, strlen(password), GCRY_KDF_PBKDF2, GCRY_MD_SHA256, salt, 12, 4096, KEYLEN, key);
 	if (error) {
-		printf("Error in opening handler!\n");
+		printf("Problem with keygen...");
+	}
+	printf("key:\t");
+	int j;
+	for (j= 0; j < KEYLEN; j++) {
+		printf("%02x", (unsigned char)key[j]);
+	}
+	printf("\n");
+
+
+	// Set the handle and key
+	error= gcry_cipher_open(&handle, GCRY_CIPHER_AES256, GCRY_CIPHER_MODE_ECB, 0);
+	if (error) {
+		printf("Problem with algo open...");
 	}
 
-	error= gcry_cipher_setkey(handle, key, sizeof(key));
+	error= gcry_cipher_setkey(handle, key, KEYLEN);
 	if (error) {
-		printf("Error in keyset!\n");
+		printf("Problem with setkey...");
 	}
 
 
-	// Buffer the plaintext
+	// Buffer the plaintext, pad if necessary
 	FILE *fptr= fopen(filename, "r");
 	if (fptr == NULL) {
 		perror("Error opening plaintext: ");
@@ -122,37 +146,38 @@ void encrypt(char *filename, char *key) {
 		perror("Error reading file length: ");
 	}
 
-	size_t fsize= ftell(fptr);
+	size_t fsize= ftell(fptr) + 1;
 	res= fseek(fptr, 0, SEEK_SET);
 
-	char *plaintext= (char*) malloc(sizeof(char) * fsize);
-	size_t numread= fread(plaintext, fsize, 1, fptr);
+	size_t netsize= fsize;
+	if (fsize % BLKLEN != 0) {
+		netsize= (fsize / BLKLEN + 1) * BLKLEN;
+	}
+
+	char *plaintext= (char*) malloc(sizeof(char) * netsize);
+	memset(plaintext, 0, netsize);
+	fread(plaintext, fsize, 1, fptr);
+	plaintext[fsize]= '\0';
 	//TODO Error handling
 
 	fclose(fptr);
 
-
-	// Encrypt the buffer
-	char *ciphertext= (char*) malloc(sizeof(char) * fsize * 100);	
-	error= gcry_cipher_encrypt(handle, ciphertext, sizeof(ciphertext), plaintext, sizeof(plaintext));
-	if (error) {
-		printf("Error encrypting the plaintext!\n");
-	}
-
-
-	// Output the ciphertext
-	// TODO Change method return to a ptr to ciphertext block and handle ciphertext elsewhere
-	char *ciphername= (char*) malloc(sizeof(filename) + 3);
-	strcpy(ciphername, filename);
-	strcat(ciphername, ".uo"); //TODO make extension global constant
+	char *encbuf= (char*) malloc(sizeof(char) * netsize * 2);
+	memset(encbuf, 0, netsize * 2);
 	
-	FILE* cptr= fopen(ciphername, "W+");
-	if (cptr == NULL) {
-		perror("Error creating ciphertext file: ");
+	
+	// Encrypt the plaintext
+	error= gcry_cipher_encrypt(handle, encbuf, netsize * 2, plaintext, netsize);
+	if (error) {
+		printf("Error encrypting plaintext");
 	}
 
-	fwrite(ciphertext, sizeof(ciphertext), 1, cptr);
-	fclose(cptr); 
+	printf("Plaintext:\t%s\n", plaintext);
+	printf("Ciphertext\t");
+	for(j= 0; j < netsize * 2; j++) {
+		printf("%02x", (unsigned char) encbuf[j]);
+	}
+	printf("\n");
 }
 
 
@@ -180,5 +205,71 @@ void save(char* filename) {
 
 
 void transmit(char* ipaddr, char* port) { 
+
+}
+
+
+void testAES() {
+	size_t KEYLEN= gcry_cipher_get_algo_keylen(GCRY_CIPHER_AES256);
+	size_t BLKLEN= gcry_cipher_get_algo_blklen(GCRY_CIPHER_AES256);
+
+	char 	*plaintext= 	malloc(BLKLEN * 4);
+	size_t 	ptextSize= 	BLKLEN * 4;
+	char 	*encbuf= 	malloc(BLKLEN * 10);
+	char	*outbuf=	malloc(ptextSize);
+	char 	*key= 		"one test aes key                ";
+	char 	*iv= 		"inivec";
+
+	gcry_error_t		error;
+	gcry_cipher_hd_t 	handle;
+
+	memset(plaintext, 0, BLKLEN * 4);
+	strcpy(plaintext, "a man a plan a canal panama");
+	printf("PLAINTEXT:\t%s\n", plaintext);
+
+	error= gcry_cipher_open(&handle, GCRY_CIPHER_AES256, GCRY_CIPHER_MODE_CBC, 0);
+	if (error) {
+		printf("Error in open: %s | %s\n", gcry_strsource(error), gcry_strerror(error));
+		return;
+	}
+
+	error= gcry_cipher_setkey(handle, key, KEYLEN);
+	if (error) {
+		printf("Error in setkey: %s | %s\n", gcry_strsource(error), gcry_strerror(error));
+		return;
+	}
+
+	/*error= gcry_cipher_setiv(handle, iv, BLKLEN);
+	if (error) {
+		printf("Error in setiv: %s | %s\n", gcry_strsource(error), gcry_strerror(error));
+		return;
+	}*/
+
+	error= gcry_cipher_encrypt(handle, plaintext, BLKLEN * 4, NULL, 0);
+	if (error) {
+		printf("Error in encrypt: %s | %s\n", gcry_strsource(error), gcry_strerror(error));
+		return;
+	}
+
+	printf("CIPHERTEXT:\t");
+	int i;
+	for (i= 0; i < ptextSize; i++) {
+		printf("%02X", (unsigned char) plaintext[i]);
+	}
+	printf("\n");
+
+	/*error= gcry_cipher_setiv(handle, iv, BLKLEN);
+	if (error) {
+		printf("Error in setiv: %s | %s\n", gcry_strsource(error), gcry_strerror(error));
+		return;
+	}*/
+
+	error= gcry_cipher_decrypt(handle, plaintext, BLKLEN * 4, NULL, 0);
+	if (error) {
+		printf("Error in decrypt: %s | %s\n", gcry_strsource(error), gcry_strerror(error));
+		return;
+	}	
+
+	printf("OUTPUTTEXT:\t%s\n", plaintext);
 
 }
