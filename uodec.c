@@ -73,7 +73,7 @@ int main(int argc, char **argv) {
 		printf("Problem with setiv...");
 	}
 
-	char *inbuf= (char*) malloc(sizeof(char) * MAX_CHUNK);
+	char *inbuf= (char*) malloc(sizeof(char) * MAX_CHUNK + 16);
 	char *outbuf= (char*) malloc(sizeof(char) * MAX_CHUNK + 16);
 
 	// Begin looping and encrypting
@@ -91,17 +91,17 @@ int main(int argc, char **argv) {
 			break;
 		}
 
-		// Disregard HMAC for now.
-		numread -= 16;
-		int padamt= 0;
-
-
+		// Decrypt and check HMAC
 		error= gcry_cipher_decrypt(handle, outbuf, numread, inbuf, numread);
 		if (error) {
 			printf("Error decrypting plaintext\n");
 		}
+
+		// Disregard HMAC for now.
+		numread -= 16;
 		
 		// Handle padding at end
+		int padamt= 0;
 		if (numread % MAX_CHUNK != 0) {
 			padamt= outbuf[numread - 1];
 		}

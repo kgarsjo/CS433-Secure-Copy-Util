@@ -13,18 +13,18 @@
 const char* const 	dFlagStr= "-d";
 const char* const 	lFlagStr= "-l";
 const int 		MAX_CHUNK= 1024;
-
+// TODO make HMAC size constant for encrypt function
 
 /* -------------------------------- //
 	Function Prototypes
 // -------------------------------- */
-void 	encryptAndSend(char*, char*, int, int, int);
-void 	gcryptInit();
-char*	getMAC(char*, int);
-void 	printUsage();
-int	setupLocal(char*);
-void 	setupSocket(char*, char*);
-void 	test_printKey(char*);
+void 		encryptAndSend(char*, char*, int, int, int);
+void 		gcryptInit();
+char*	genMAC(char*, int, char*, int, char*, int);
+void 		printUsage();
+int		setupLocal(char*);
+void 		setupSocket(char*, char*);
+void 		test_printKey(char*);
 
 /* -------------------------------- //
 	Program Entry
@@ -133,9 +133,8 @@ void encryptAndSend(char *filename, char *password, int fdin, int sockfd, int lo
 	
 	const char *salt= "saltyEnough?";
 	const char *iv=   "inivec\0\0\0\0\0\0\0\0\0\0";
-	const char *hmac= "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
 
-	char *inbuf=  	(char*) malloc(sizeof(char) * MAX_CHUNK);
+	char *inbuf=  	(char*) malloc(sizeof(char) * MAX_CHUNK + 16);
 	char *outbuf= 	(char*) malloc(sizeof(char) * MAX_CHUNK + 16);
 
 	int 	bytesread= 	0;
@@ -148,12 +147,10 @@ void encryptAndSend(char *filename, char *password, int fdin, int sockfd, int lo
 
 	// Generate key using PBKDF2
 	char *key= (char*) malloc(sizeof(char) * KEYLEN);
-	error= gcry_kdf_derive(password, strlen(password), GCRY_KDF_PBKDF2, GCRY_MD_SHA256, salt, 12, 4096, KEYLEN, key);
+	error= gcry_kdf_derive(password, strlen(password), GCRY_KDF_PBKDF2, GCRY_MD_SHA256, salt, strlen(salt), 4096, KEYLEN, key);
 	if (error) {
 		printf("Problem with keygen...");
 	}
-	test_printKey(key);
-
 
 	// Set the handle, key, and initialization vector
 	error= gcry_cipher_open(&handle, GCRY_CIPHER_AES256, GCRY_CIPHER_MODE_ECB, 0);
@@ -174,7 +171,7 @@ void encryptAndSend(char *filename, char *password, int fdin, int sockfd, int lo
 
 	// Begin looping and encrypting
 	while (bytesread < filelen) {
-		memset(inbuf, 0, MAX_CHUNK);
+		memset(inbuf, 0, MAX_CHUNK + 16);
 		memset(outbuf, 0, MAX_CHUNK + 16);
 		
 		bytesread= read(fdin, inbuf, MAX_CHUNK);
@@ -183,27 +180,28 @@ void encryptAndSend(char *filename, char *password, int fdin, int sockfd, int lo
 			exit(3);
 		}
 
-		// Handle end-transmission padding
+		// Handle end-transmission padding, following RFC 5652
+		// See http://tools.ietf.org/html/rfc5652#section-6.3
 		if (bytesread != MAX_CHUNK) {
 			int total= (BLKLEN * (bytesread / BLKLEN + 1));
-			char padamt= total - bytesread;
+			int padamt= total - bytesread;
 			bytesread= total;
-
 			int i;
 			for (i= padamt; i > 0; i--) {
-				inbuf[bytesread - i]= padamt;
+				inbuf[bytesread - i]= (char) padamt;
 			}
 		}
 
-		error= gcry_cipher_encrypt(handle, outbuf, MAX_CHUNK, inbuf, bytesread);
+		// Generate HMAC hash and encrypt
+		genMAC(inbuf, bytesread, &inbuf[bytesread], 16, key, KEYLEN);
+		error= gcry_cipher_encrypt(handle, outbuf, MAX_CHUNK, inbuf, bytesread + 16);
 		if (error) {
 			printf("Error encrypting plaintext\n");
 		}
 		
 		// Send to applicable outputs
 		if (localfd != -1) {
-			byteswrote=   write(localfd, outbuf, bytesread);
-			byteswrote += write(localfd, hmac, 16);
+			byteswrote=   write(localfd, outbuf, bytesread + 16);
 		}
 		
 		bytestotal += byteswrote;
@@ -230,6 +228,48 @@ void gcryptInit() {
 	gcry_control(GCRYCTL_INIT_SECMEM, 16384, 0);
 	gcry_control(GCRYCTL_RESUME_SECMEM_WARN);
 	gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
+}
+
+
+char* genMAC(char *inbuf, int ilen, char *dest, int destlen, char *key, int klen) {
+	gcry_md_hd_t handle;
+	gcry_error_t error;
+	int digestlen= gcry_md_get_algo_dlen(GCRY_MD_SHA256);
+
+	// Set the HMAC handle and key
+	error= gcry_md_open(&handle, GCRY_MD_SHA256, GCRY_MD_FLAG_HMAC);
+	if (error) {
+		printf("Error opening HMAC MD handle\n");
+	}
+
+	error= gcry_md_setkey(handle, key, klen);
+	if (error) {
+		printf("Error setting HMAC key\n");
+	}
+
+	// Add buffer contents and finalize hash
+	gcry_md_write(handle, inbuf, ilen);
+
+	error= gcry_md_final(handle);
+	if (error) {
+		printf("Error generating HMAC\n");
+	}
+
+	unsigned char *digest= gcry_md_read(handle, GCRY_MD_SHA256);
+	if (digest == NULL) {
+		printf("Error in reading HMAC\n");
+	}
+
+	// Copy digest to the appropriate allocated dest buffer, as space allows
+	if (destlen < digestlen) {
+		strncpy(dest, (char*)digest, destlen);
+	} else {
+		strncpy(dest, (char*)digest, digestlen);
+	}
+
+	gcry_md_close(handle);
+
+	return dest;
 }
 
 
@@ -262,7 +302,7 @@ void test_printKey(char *key) {
 	printf("key:\t");
 	int j;
 	for (j= 0; j < KEYLEN; j++) {
-		printf("%02x", (unsigned char)key[j]);
+		printf("%02x", (char)key[j]);
 	}
 	printf("\n");
 }
