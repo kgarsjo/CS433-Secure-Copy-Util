@@ -260,6 +260,10 @@ char* genMAC(char *inbuf, int ilen, char *dest, int destlen, char *key, int klen
 		printf("Error in reading HMAC\n");
 	}
 
+	if (dest == NULL) {
+		return (char*) digest;
+	}
+
 	// Copy digest to the appropriate allocated dest buffer, as space allows
 	if (destlen < digestlen) {
 		strncpy(dest, (char*)digest, destlen);

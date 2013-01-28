@@ -7,13 +7,27 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+/* -------------------------------- //
+	Golbal Variables
+// -------------------------------- */
 const int MAX_CHUNK= 1024;
 
+/* -------------------------------- //
+	Function Prototypes
+// -------------------------------- */
+void decrypt(char*, int, int);
+char*	genMAC(char*, int, char*, int, char*, int);
+
+/* -------------------------------- //
+	Program Entry
+// -------------------------------- */
 int main(int argc, char **argv) {
 	
 	if (argc != 2) { exit(1); }
 	char *filename= argv[1];
 
+
+	// Open the input and output files
 	int fdin= open(filename, O_RDONLY);
 	if (fdin == -1) {
 		perror("Opening encrypted file");
@@ -23,6 +37,7 @@ int main(int argc, char **argv) {
 	if (fdout == -1) {
 		perror("Opening output file");
 	}
+
 
 	// Prompt for password
 	char *password= NULL;
@@ -34,6 +49,16 @@ int main(int argc, char **argv) {
 		exit(3);
 	}
 
+	decrypt(password, fdin, fdout);
+
+	close(fdin);
+	close(fdout);
+	free(password);
+
+	return 0;
+}
+
+void decrypt(char *password, int fdin, int fdout) {
 	gcry_cipher_hd_t handle;
 	gcry_error_t	 error;
 
@@ -49,13 +74,6 @@ int main(int argc, char **argv) {
 	if (error) {
 		printf("Problem with keygen...");
 	}
-	printf("key:\t");
-	int j;
-	for (j= 0; j < KEYLEN; j++) {
-		printf("%02x", (unsigned char)key[j]);
-	}
-	printf("\n");
-
 
 	// Set the handle and key
 	error= gcry_cipher_open(&handle, GCRY_CIPHER_AES256, GCRY_CIPHER_MODE_ECB, 0);
@@ -91,30 +109,81 @@ int main(int argc, char **argv) {
 			break;
 		}
 
+
 		// Decrypt and check HMAC
 		error= gcry_cipher_decrypt(handle, outbuf, numread, inbuf, numread);
 		if (error) {
 			printf("Error decrypting plaintext\n");
 		}
 
-		// Disregard HMAC for now.
-		numread -= 16;
-		
+		int msglen= numread - 16;
+		char *HMAC= &outbuf[msglen];
+		char *digest= genMAC(outbuf, msglen, NULL, 0, key, KEYLEN);
+		int res= strncmp(HMAC, digest, 16);
+		if (res != 0) {
+			printf("[ERROR] MAC digests do not match!\n");
+		}
+
 		// Handle padding at end
 		int padamt= 0;
-		if (numread % MAX_CHUNK != 0) {
-			padamt= outbuf[numread - 1];
+		if (msglen % MAX_CHUNK != 0) {
+			padamt= outbuf[msglen - 1];
 		}
 		
-		numwrote= write(fdout, outbuf, numread - padamt);
+		numwrote= write(fdout, outbuf, msglen - padamt);
 		numtotal += numwrote;
+		printf("read %d bytes, wrote bytes %d\n", numread, msglen);
 	}
 	if (numread == 0) {
-		printf("\n\nSuccessfully encrypted (%d bytes written)\n", numtotal);
+		printf("\nSuccessfully encrypted (%d bytes written)\n", numtotal);
 	}
 
-	close(fdin);
-	close(fdout);
+	free(inbuf);
+	free(outbuf);
+}
 
-	return 0;
+
+char* genMAC(char *inbuf, int ilen, char *dest, int destlen, char *key, int klen) {
+	gcry_md_hd_t handle;
+	gcry_error_t error;
+	int digestlen= gcry_md_get_algo_dlen(GCRY_MD_SHA256);
+
+	// Set the HMAC handle and key
+	error= gcry_md_open(&handle, GCRY_MD_SHA256, GCRY_MD_FLAG_HMAC);
+	if (error) {
+		printf("Error opening HMAC MD handle\n");
+	}
+
+	error= gcry_md_setkey(handle, key, klen);
+	if (error) {
+		printf("Error setting HMAC key\n");
+	}
+
+	// Add buffer contents and finalize hash
+	gcry_md_write(handle, inbuf, ilen);
+
+	error= gcry_md_final(handle);
+	if (error) {
+		printf("Error generating HMAC\n");
+	}
+
+	unsigned char *digest= gcry_md_read(handle, GCRY_MD_SHA256);
+	if (digest == NULL) {
+		printf("Error in reading HMAC\n");
+	}
+
+	if (dest == NULL) {
+		return (char*) digest;
+	}
+
+	// Copy digest to the appropriate allocated dest buffer, as space allows
+	if (destlen < digestlen) {
+		strncpy(dest, (char*)digest, destlen);
+	} else {
+		strncpy(dest, (char*)digest, digestlen);
+	}
+
+	gcry_md_close(handle);
+
+	return dest;
 }
