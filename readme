@@ -1,7 +1,37 @@
 Name: Kevin Garsjo
+
 Source(s):
+-hw2_submission_kgarsjo.tar.gz
+	-hw2
+		-Makefile
+		-readme
+		-uodec.c
+		-uoenc.c
+
 Work accomplished:
+	uoenc successfully encrypts text files both locally and via sockets
+	uoenc successfully encrypts binary and extended-format files both locally and via sockets
+	uoenc halts on attempts to overwrite existing files
+	uoenc conforms to all other given sample output and instruction (afaik)
+
+	uodec successfully decrypts text files both locally and as daemon
+	uodec successfully decrypts binary and extended-format files both locally and via sockets
+	uodec halts on attempts to overwrite existing files
+	uodec conforms to all other given sample output and instruction (afaik)
+
 Code description:
+	main() in both uoenc and uodec exists to parse args, do setup and housecleaning based on mode, and call heavy-lifting functions.
+
+	The bulk of the work in uoenc is done in encryptAndSave(). The bulk of the work in uodec is done in decrypt().
+
+	gcryptInit(), genMAC(), printUsage(), and setupSocket() are helper methods both share. Other misc functions are documented in source.
+
 Comments:
+	If no flags are given, uoenc defaults to local mode.
+	If uodec is started in daemon mode, it will not respect input and must be killed via ctrl-c.
+
 Answer:
+	Gcrypt's implementation of PBKDF2 requires a choice of a hash sub-algorithm. As AES256 requires a 32-byte key and SHA256 produces a 32-byte message digest, that was the selection I chose.
+
 Hours spent:
+	20 to 25 hours. While documentation was a bit sparse, it wasn't too bad of an assignment.

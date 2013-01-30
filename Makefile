@@ -1,7 +1,7 @@
 CC=gcc
 CCFLAGS=-g -Wall
 
-all: uoenc uodec test
+all: uoenc uodec
 
 uoenc: uoenc.c
 	$(CC) $(CCFLAGS) -c uoenc.c `libgcrypt-config --cflags`
@@ -12,7 +12,7 @@ uodec: uodec.c
 	$(CC) uodec.o -o $@ `libgcrypt-config --libs`
 
 test:
-	echo "this is a test, this is only a test" | cat > text.test 
+	echo "hello there sir" | cat > text.test 
 
 clean:
 	rm -f *.o uodec uoenc
